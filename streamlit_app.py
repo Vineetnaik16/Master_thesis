@@ -1,8 +1,6 @@
 # streamlit_app.py
 import os
 from io import BytesIO
-from datetime import timedelta
-
 import pandas as pd
 import yfinance as yf
 import streamlit as st
@@ -63,40 +61,20 @@ CATS = {
     "Custom": {"(Type your own below)": ""},
 }
 
-CURRENCY_SYMBOL = {
-    "USD": "$",
-    "EUR": "€",
-    "GBP": "£",
-    "JPY": "¥",
-    "CNY": "¥",
-    "INR": "₹",
-    "CAD": "$",
-    "AUD": "$",
-    "CHF": "₣",
-}
-
 # --------------------- Sidebar ---------------------
 st.sidebar.header("Configuration")
 
 if "cat" not in st.session_state:
     st.session_state.cat = "US Index ETFs"
-if "last_ticker" not in st.session_state:
-    st.session_state.last_ticker = "SPY"
 
-cat = st.sidebar.selectbox(
-    "Category",
-    list(CATS.keys()),
-    index=list(CATS.keys()).index(st.session_state.cat),
-)
+cat = st.sidebar.selectbox("Category", list(CATS.keys()), index=list(CATS.keys()).index(st.session_state.cat))
 st.session_state.cat = cat
 
 choice_label = st.sidebar.selectbox("Select ticker", list(CATS[cat].keys()), index=0)
 selected_ticker = CATS[cat][choice_label]
 
 if cat == "Custom":
-    user_ticker = st.sidebar.text_input(
-        "Custom ticker (e.g., MSFT, ^GSPC, BTC-USD)", value=selected_ticker or st.session_state.last_ticker
-    )
+    user_ticker = st.sidebar.text_input("Custom ticker (e.g., MSFT, ^GSPC, BTC-USD)", value=selected_ticker)
     ticker = (user_ticker or "SPY").strip().upper()
 else:
     ticker = selected_ticker
@@ -108,72 +86,25 @@ fetch = st.sidebar.button("Fetch Data")
 # --------------------- Helpers ---------------------
 @st.cache_data(show_spinner=False)
 def fetch_prices(tkr: str, start, end) -> pd.DataFrame:
-    # yfinance uses exclusive 'end'; add 1 day so 'today' is included
-    end_plus = pd.to_datetime(end) + timedelta(days=1)
-    df = yf.download(tkr, start=start, end=end_plus, progress=False, auto_adjust=False)
+    df = yf.download(tkr, start=start, end=end, progress=False, auto_adjust=False)
     # Flatten MultiIndex if present
     if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [" ".join([c for c in tup if c]).strip() for tup in df.columns.values]
+        df.columns = [' '.join(col).strip() for col in df.columns.values]
     return df
-
-def _pick_col(cols, predicate, fallback=None):
-    for c in cols:
-        if predicate(c):
-            return c
-    return fallback
 
 def prep_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
-
-    # Ensure Date index present
-    if "Date" not in df.reset_index().columns:
-        df = df.reset_index()
-
-    cols = [str(c) for c in df.columns]
-
-    # Find Close (prefer "Close*" but not "Adj Close*")
-    close_col = _pick_col(
-        cols, lambda c: c.lower().startswith("close") and not c.lower().startswith("adj close")
-    )
-    # Find Adj Close
-    adj_col = _pick_col(cols, lambda c: c.lower().startswith("adj close"))
-
-    # Fallbacks
-    if close_col is None:
-        close_col = _pick_col(cols, lambda c: c.lower() == "close") or _pick_col(
-            cols, lambda c: "close" in c.lower()
-        )
-    if adj_col is None:
-        # Some tickers don't have adj close → fall back to close
-        adj_col = close_col
-
-    required = ["Date", close_col, adj_col]
-    if any(c is None for c in required):
-        return pd.DataFrame()
-
-    out = df.reset_index()[["Date", close_col, adj_col]].copy()
+    # Dynamically find columns in case ticker symbol is appended
+    close_col = [c for c in df.columns if c.lower().startswith("close") and not c.lower().startswith("adj")][0]
+    adj_col = [c for c in df.columns if c.lower().startswith("adj close")][0]
+    out = df.reset_index()[["Date", close_col, adj_col]]
     out.columns = ["Date", "Close", "Adj Close"]
-    # Ensure datetime
-    out["Date"] = pd.to_datetime(out["Date"])
-    return out.sort_values("Date")
-
-def get_currency(tkr: str) -> str:
-    try:
-        finfo = yf.Ticker(tkr).fast_info
-        curr = getattr(finfo, "currency", None) or finfo.get("currency", None)
-        return str(curr) if curr else "USD"
-    except Exception:
-        return "USD"
+    return out
 
 # --------------------- Flow ---------------------
 if not fetch:
     st.info("Pick a **category** and **ticker** in the sidebar, set dates, then click **Fetch Data**.")
-    st.stop()
-
-# Basic validation
-if start_date >= end_date:
-    st.error("Start date must be before end date.")
     st.stop()
 
 with st.spinner(f"Downloading {ticker}…"):
@@ -189,18 +120,16 @@ if raw is None or raw.empty:
     st.stop()
 
 data = prep_df(raw)
-if data.empty:
-    st.warning("Couldn't find expected Close/Adj Close columns in the download.")
-    st.stop()
 
-st.session_state.last_ticker = ticker
+# Currency info
+try:
+    finfo = yf.Ticker(ticker).fast_info
+    currency = getattr(finfo, "currency", None) or finfo.get("currency", "USD")
+except Exception:
+    currency = "USD"
 
-# Currency info (and display symbol if we know it)
-currency = get_currency(ticker)
-curr_symbol = CURRENCY_SYMBOL.get(currency.upper(), currency.upper())
-
-st.subheader(f"{ticker} — Close Prices (Raw & Adjusted)")
-st.caption(f"Currency: **{currency}** ({curr_symbol}) • Rows: **{len(data)}**")
+st.subheader(f"{ticker} — Close Prices (Raw & Adjusted) in US $")
+st.caption(f"Currency: **{currency}** • Rows: **{len(data)}**")
 
 # Table
 st.dataframe(data, use_container_width=True, height=420)
@@ -216,8 +145,7 @@ st.download_button(
     "📥 Download CSV",
     data=buf.getvalue(),
     file_name=f"{ticker}_close_adjclose.csv",
-    mime="text/csv",
+    mime="text/csv"
 )
 
-st.toast("Done", icon="✅")
-st.success("✅ Finished fetching and rendering data.")
+st.success("✅ Done")
