@@ -1,24 +1,17 @@
-import numpy as np
+# data_scraper.py
+
 import pandas as pd
 import yfinance as yf
-import warnings
-import plotly.io as pio
 
-# Optional visualization and modeling imports (can be used in future analysis)
-from hmmlearn.hmm import GaussianHMM
-from sklearn.cluster import AgglomerativeClustering
-from sklearn.mixture import GaussianMixture
-import matplotlib.pyplot as plt
+# Set trading instrument
+trading_instrument = 'SPY'
+today = pd.Timestamp.today().strftime('%Y-%m-%d')
 
-# Suppress warnings
-warnings.filterwarnings('ignore')
-pio.renderers.default = 'notebook'
+# Download data
+data = yf.download(trading_instrument, start="1990-01-01", end=today)
+data = data.reset_index()[['Date', 'Close']]
+data.columns = ['Date', 'Close']
 
-# --- Parameters ---
-TRADING_INSTRUMENT = 'SPY'  # Options: SPY, QQQ, XLK
-START_DATE = "1990-01-01"
-TODAY = pd.Timestamp.today().strftime('%Y-%m-%d')
-
-# --- Data Download ---
-print(f"Downloading {TRADING_INSTRUMENT} data from {START_DATE} to {TODAY}...")
-data = yf.download(TRADING_INSTRUMENT, start=START_DATE, end=TODAY)
+# Save to CSV
+data.to_csv('spy_raw_data.csv', index=False)
+print("✅ Data saved to spy_raw_data.csv")
