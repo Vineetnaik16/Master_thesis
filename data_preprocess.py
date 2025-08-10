@@ -2,16 +2,20 @@
 import os
 from io import BytesIO
 from datetime import timedelta
-
+import numpy as np
 import pandas as pd
 import yfinance as yf
 import streamlit as st
 
+# ---------- Page ----------
 st.set_page_config(page_title="Market Data Scraper", page_icon="📈", layout="wide")
 st.title(" Market Data Scraper")
 st.caption(f"Working dir: `{os.getcwd()}`")
 
-# --------------------- Grouped tickers ---------------------
+# Ensure data dir
+os.makedirs("data", exist_ok=True)
+
+# ---------- Ticker groups ----------
 CATS = {
     "US Index ETFs": {
         "SPDR S&P 500 (SPY)": "SPY",
@@ -63,100 +67,44 @@ CATS = {
     "Custom": {"(Type your own below)": ""},
 }
 
-CURRENCY_SYMBOL = {
-    "USD": "$",
-    "EUR": "€",
-    "GBP": "£",
-    "JPY": "¥",
-    "CNY": "¥",
-    "INR": "₹",
-    "CAD": "$",
-    "AUD": "$",
-    "CHF": "₣",
-}
+CURRENCY_SYMBOL = {"USD": "$","EUR":"€","GBP":"£","JPY":"¥","CNY":"¥","INR":"₹","CAD":"$","AUD":"$","CHF":"CHF"}
 
-# --------------------- Sidebar ---------------------
+# ---------- Sidebar ----------
 st.sidebar.header("Configuration")
-
 if "cat" not in st.session_state:
     st.session_state.cat = "US Index ETFs"
 if "last_ticker" not in st.session_state:
     st.session_state.last_ticker = "SPY"
 
-cat = st.sidebar.selectbox(
-    "Category",
-    list(CATS.keys()),
-    index=list(CATS.keys()).index(st.session_state.cat),
-)
+cat = st.sidebar.selectbox("Category", list(CATS.keys()),
+                           index=list(CATS.keys()).index(st.session_state.cat))
 st.session_state.cat = cat
 
 choice_label = st.sidebar.selectbox("Select ticker", list(CATS[cat].keys()), index=0)
 selected_ticker = CATS[cat][choice_label]
 
 if cat == "Custom":
-    user_ticker = st.sidebar.text_input(
-        "Custom ticker (e.g., MSFT, ^GSPC, BTC-USD)", value=selected_ticker or st.session_state.last_ticker
-    )
+    user_ticker = st.sidebar.text_input("Custom ticker (e.g., MSFT, ^GSPC, BTC-USD)",
+                                        value=selected_ticker or st.session_state.last_ticker)
     ticker = (user_ticker or "SPY").strip().upper()
 else:
     ticker = selected_ticker
 
 start_date = st.sidebar.date_input("Start date", pd.to_datetime("1990-01-01"))
-end_date = st.sidebar.date_input("End date", pd.Timestamp.today())
+end_date   = st.sidebar.date_input("End date", pd.Timestamp.today())
 fetch = st.sidebar.button("Fetch Data")
 
-# --------------------- Helpers ---------------------
-@st.cache_data(show_spinner=False)
-def fetch_prices(tkr: str, start, end) -> pd.DataFrame:
-    # yfinance uses exclusive 'end'; add 1 day so 'today' is included
-    end_plus = pd.to_datetime(end) + timedelta(days=1)
-    df = yf.download(tkr, start=start, end=end_plus, progress=False, auto_adjust=False)
-    # Flatten MultiIndex if present
+# ---------- Helpers ----------
+def _flatten_columns(df: pd.DataFrame) -> pd.DataFrame:
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = [" ".join([c for c in tup if c]).strip() for tup in df.columns.values]
     return df
 
-def _pick_col(cols, predicate, fallback=None):
-    for c in cols:
-        if predicate(c):
-            return c
-    return fallback
-
-def prep_df(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    # Ensure Date index present
-    if "Date" not in df.reset_index().columns:
-        df = df.reset_index()
-
-    cols = [str(c) for c in df.columns]
-
-    # Find Close (prefer "Close*" but not "Adj Close*")
-    close_col = _pick_col(
-        cols, lambda c: c.lower().startswith("close") and not c.lower().startswith("adj close")
-    )
-    # Find Adj Close
-    adj_col = _pick_col(cols, lambda c: c.lower().startswith("adj close"))
-
-    # Fallbacks
-    if close_col is None:
-        close_col = _pick_col(cols, lambda c: c.lower() == "close") or _pick_col(
-            cols, lambda c: "close" in c.lower()
-        )
-    if adj_col is None:
-        # Some tickers don't have adj close → fall back to close
-        adj_col = close_col
-
-    required = ["Date", close_col, adj_col]
-    if any(c is None for c in required):
-        return pd.DataFrame()
-
-    out = df.reset_index()[["Date", close_col, adj_col]].copy()
-    out.columns = ["Date", "Close", "Adj Close"]
-    # Ensure datetime
-    out["Date"] = pd.to_datetime(out["Date"])
-    return out.sort_values("Date")
+@st.cache_data(show_spinner=False)
+def fetch_prices(tkr: str, start, end) -> pd.DataFrame:
+    end_plus = pd.to_datetime(end) + timedelta(days=1)  # include end day
+    df = yf.download(tkr, start=start, end=end_plus, progress=False, auto_adjust=False)
+    return _flatten_columns(df)
 
 def get_currency(tkr: str) -> str:
     try:
@@ -166,23 +114,53 @@ def get_currency(tkr: str) -> str:
     except Exception:
         return "USD"
 
-# --------------------- Flow ---------------------
+def prep_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Return Date, Close[, Adj Close] (Adj Close optional; never fabricated)."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    dfr = df.reset_index().copy()
+
+    # pick date col
+    date_col = "Date" if "Date" in dfr.columns else next(
+        (c for c in dfr.columns if pd.api.types.is_datetime64_any_dtype(dfr[c])),
+        dfr.columns[0]
+    )
+
+    # case/space-agnostic pickers
+    def canon(s): return "".join(str(s).lower().split())
+    close_col = next((c for c in dfr.columns if canon(c) == "close"), None)
+    adj_col   = next((c for c in dfr.columns if canon(c) == "adjclose"), None)
+    if close_col is None:
+        for c in dfr.columns:
+            cc = canon(c)
+            if "close" in cc and "adjclose" not in cc:
+                close_col = c; break
+
+    if close_col is None and adj_col is None:
+        return pd.DataFrame()
+
+    if close_col is None and adj_col is not None:
+        out = dfr[[date_col, adj_col]].copy()
+        out.columns = ["Date", "Close"]
+    else:
+        keep = [date_col, close_col] + ([adj_col] if adj_col else [])
+        out = dfr[keep].copy()
+        out.columns = ["Date", "Close"] + (["Adj Close"] if adj_col else [])
+
+    out["Date"] = pd.to_datetime(out["Date"])
+    return out.sort_values("Date").reset_index(drop=True)
+
+# ---------- Flow ----------
 if not fetch:
-    st.info("Pick a **category** and **ticker** in the sidebar, set dates, then click **Fetch Data**.")
+    st.info("Pick a **category** and **ticker**, set dates, then click **Fetch Data**.")
     st.stop()
 
-# Basic validation
 if start_date >= end_date:
     st.error("Start date must be before end date.")
     st.stop()
 
 with st.spinner(f"Downloading {ticker}…"):
-    try:
-        raw = fetch_prices(ticker, start_date, end_date)
-    except Exception as e:
-        st.error("Download failed.")
-        st.exception(e)
-        st.stop()
+    raw = fetch_prices(ticker, start_date, end_date)
 
 if raw is None or raw.empty:
     st.warning("No data returned. Check ticker or date range.")
@@ -193,31 +171,41 @@ if data.empty:
     st.warning("Couldn't find expected Close/Adj Close columns in the download.")
     st.stop()
 
-st.session_state.last_ticker = ticker
-
-# Currency info (and display symbol if we know it)
+# Metadata
 currency = get_currency(ticker)
 curr_symbol = CURRENCY_SYMBOL.get(currency.upper(), currency.upper())
+has_adj = "Adj Close" in data.columns
 
-st.subheader(f"{ticker} — Close Prices (Raw & Adjusted)")
+st.session_state.last_ticker = ticker
+
+# ----- Display -----
+title = f"{ticker} — Close" + (" & Adjusted Close" if has_adj else "")
+st.subheader(title)
 st.caption(f"Currency: **{currency}** ({curr_symbol}) • Rows: **{len(data)}**")
 
-# Table
 st.dataframe(data, use_container_width=True, height=420)
+cols_to_plot = ["Close"] + (["Adj Close"] if has_adj else [])
+st.line_chart(data.set_index("Date")[cols_to_plot])
 
-# Chart with both series
-chart_data = data.set_index("Date")[["Close", "Adj Close"]]
-st.line_chart(chart_data)
-
-# Download CSV
 buf = BytesIO()
 data.to_csv(buf, index=False)
-st.download_button(
-    "📥 Download CSV",
-    data=buf.getvalue(),
-    file_name=f"{ticker}_close_adjclose.csv",
-    mime="text/csv",
-)
+fname = f"{ticker}_{'close_adjclose' if has_adj else 'close'}.csv"
+st.download_button("📥 Download CSV", data=buf.getvalue(), file_name=fname, mime="text/csv")
 
-st.toast("Done", icon="✅")
 st.success("✅ Finished fetching and rendering data.")
+
+# ---------- NEW: Proceed button ----------
+proceed = st.button(f"🚀 Proceed with {ticker}")
+if proceed:
+    # stash data and meta for the next page
+    st.session_state.base_df = data
+    st.session_state.base_meta = {
+        "ticker": ticker,
+        "currency": currency,
+        "has_adj": has_adj,
+    }
+    # navigate to feature engineering page
+    try:
+        st.switch_page("pages/02_Feature_Engineering.py")
+    except Exception:
+        st.page_link("pages/02_Feature_Engineering.py", label="Open Feature Engineering ▶", icon="➡️")
