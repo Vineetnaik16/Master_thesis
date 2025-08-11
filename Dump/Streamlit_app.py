@@ -8,7 +8,7 @@ import yfinance as yf
 import streamlit as st
 import altair as alt
 
-st.set_page_config(page_title="Market Data Scraper", page_icon="📈", layout="wide")
+st.set_page_config(page_title="BullVision", page_icon="📈", layout="wide")
 
 # ---------- NAV GUARD: if user just clicked Proceed, jump right away ----------
 if st.session_state.get("nav_to_features") and st.session_state.get("base_df") is not None:
@@ -18,7 +18,7 @@ if st.session_state.get("nav_to_features") and st.session_state.get("base_df") i
         st.page_link("pages/02_Feature_Engineering.py", label="Open Feature Engineering ▶", icon="➡️")
         st.stop()
 
-st.title(" Market Data Scraper")
+st.title(" BullVision")
 st.caption(f"Working dir: `{os.getcwd()}`")
 
 # Ensure folders

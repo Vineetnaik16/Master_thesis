@@ -7,8 +7,8 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 
-st.set_page_config(page_title="Regime • 20% Rule", page_icon="🧭", layout="wide")
-st.title("🧭 Regime Classification — 20% Rule")
+st.set_page_config(page_title="Regime History", page_icon="🧭", layout="wide")
+st.title("🧭 Regime History — as per 20% Rule")
 
 # -------- get input --------
 meta = st.session_state.get("base_meta", {})
@@ -37,7 +37,7 @@ if df is None or df.empty:
         for k in ("base_df","base_meta","nav_to_features","nav_to_forecast"):
             st.session_state.pop(k, None)
         try:
-            st.switch_page("streamlit_app.py")
+            st.switch_page("Home.py")
         except Exception:
             st.rerun()
     st.stop()
@@ -144,7 +144,7 @@ with c1:
         for k in ("nav_to_features","nav_to_forecast"):
             st.session_state.pop(k, None)
         try:
-            st.switch_page("streamlit_app.py")
+            st.switch_page("Home.py")
         except Exception:
             st.rerun()
 
@@ -152,6 +152,6 @@ with c2:
     if st.button("🔮 Proceed to forecast", type="primary"):
         st.session_state["nav_to_forecast"] = True
         try:
-            st.switch_page("pages/03_Forecast.py")
+            st.switch_page("pages/04_Forecast.py")
         except Exception:
             st.rerun()

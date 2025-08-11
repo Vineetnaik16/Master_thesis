@@ -363,12 +363,9 @@ try:
     cols = st.columns(2)
     if cols[0].button("↩ Back to main"):
         for k in ("base_df","base_meta","nav_to_features"): st.session_state.pop(k, None)
-        try: st.switch_page("streamlit_app.py")
+        try: st.switch_page("Home.py")
         except Exception: st.rerun()
-    if cols[1].button("🧪 Go to Feature Engineering"):
-        try: st.switch_page("pages/02_Feature_Engineering.py")
-        except Exception: st.rerun()
-
+        
     st.success("✅ Forecast ready.")
 
 except Exception as e:
